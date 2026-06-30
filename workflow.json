@@ -1,0 +1,236 @@
+{
+  "name": "Email AI Auto-Responder",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "q": "is:unread -label:auto-responded"
+        },
+        "options": {
+          "dataPropertyAttachmentsPrefixName": "attachment_"
+        }
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth-cred",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an intelligent email assistant. Analyze the incoming email and respond with a JSON object containing: category (one of: Support, Sales, Spam, Other), confidence (0-1), subject_reply (concise reply subject line), reply_body (professional email reply body, 2-4 paragraphs). Return ONLY valid JSON, no markdown fences.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"From: {{ $json.from }}\\nSubject: {{ $json.subject }}\\nDate: {{ $json.date }}\\n\\nBody:\\n{{ $json.text }}\"\n    }\n  ],\n  \"temperature\": 0.3,\n  \"max_tokens\": 1024,\n  \"response_format\": { \"type\": \"json_object\" }\n}",
+        "options": {}
+      },
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "name": "Groq AI Categorize & Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [480, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-cred",
+          "name": "Groq API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseText = $input.first().json.choices[0].message.content;\nconst aiResponse = JSON.parse(responseText);\n\nreturn [{\n  json: {\n    ...aiResponse,\n    original_from: $('Gmail Trigger').first().json.from,\n    original_subject: $('Gmail Trigger').first().json.subject,\n    original_message_id: $('Gmail Trigger').first().json.id,\n    original_thread_id: $('Gmail Trigger').first().json.threadId\n  }\n}];"
+      },
+      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "spam-check",
+              "leftValue": "={{ $json.category }}",
+              "rightValue": "Spam",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d4e5f6a7-b8c9-0123-defa-234567890123",
+      "name": "IF Not Spam",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $('Parse AI Response').first().json.original_message_id }}",
+        "message": "={{ $json.reply_body }}",
+        "options": {
+          "threadId": "={{ $('Parse AI Response').first().json.original_thread_id }}",
+          "sendAndArchive": false
+        }
+      },
+      "id": "e5f6a7b8-c9d0-1234-efab-345678901234",
+      "name": "Gmail Send Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1200, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth-cred",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Parse AI Response').first().json.original_message_id }}",
+        "labelIds": ["Label_auto-responded"]
+      },
+      "id": "f6a7b8c9-d0e1-2345-fabc-456789012345",
+      "name": "Label as Auto-Responded",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1440, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth-cred",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Parse AI Response').first().json.original_message_id }}",
+        "labelIds": ["Label_spam-detected"]
+      },
+      "id": "a7b8c9d0-e1f2-3456-abcd-567890123456",
+      "name": "Label Spam",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1200, 420],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-oauth-cred",
+          "name": "Gmail OAuth2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Groq AI Categorize & Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq AI Categorize & Draft": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "IF Not Spam",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Not Spam": {
+      "main": [
+        [
+          {
+            "node": "Gmail Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label Spam",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Send Reply": {
+      "main": [
+        [
+          {
+            "node": "Label as Auto-Responded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2026-06-30T00:00:00.000Z",
+      "updatedAt": "2026-06-30T00:00:00.000Z",
+      "id": "tag-email-ai",
+      "name": "email-automation"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-30T00:00:00.000Z",
+  "versionId": "v1.0.0"
+}
